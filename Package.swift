@@ -1,0 +1,14 @@
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "SoundDial",
+    platforms: [.macOS(.v15)],
+    targets: [
+        .executableTarget(
+            name: "SoundDial",
+            path: "Sources/SoundDial",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        )
+    ]
+)
