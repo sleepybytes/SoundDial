@@ -45,6 +45,9 @@ final class RoutingEngine {
         }
 
         for (bundleID, want) in desired where taps[bundleID] == nil {
+            // Starting a tap on an output that can't play blocks for seconds, so wait until it's checked;
+            // the check's result triggers another reconcile.
+            guard devices.isReady(want.output.uid) else { continue }
             let key = "\(want.objects)|\(want.output.id)"
             if let failure = failures[bundleID], failure.key == key, now.timeIntervalSince(failure.at) < 10 { continue }
             do {
@@ -54,6 +57,7 @@ final class RoutingEngine {
             } catch {
                 failures[bundleID] = (key, now)
                 audioLog.error("Tap \(bundleID, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                devices.probe(want.output.uid)
             }
         }
     }

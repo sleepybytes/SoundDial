@@ -37,10 +37,19 @@ final class DeviceManager {
     private(set) var softGains: [String: Float] {
         didSet { UserDefaults.standard.set(softGains, forKey: "softGains") }
     }
+    /// Whether macOS could start each output the last time it was checked. A monitor whose audio
+    /// link is down fails here; apps routed to it fall back to the default output until it passes.
+    private(set) var availability: [String: Bool] = [:]
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored private var listeners: [PropertyListener] = []
     @ObservationIgnored private var volumeListeners: [PropertyListener] = []
+    @ObservationIgnored private var reprobeTimer: Timer?
+    /// Starting a broken device can block for ~10 s, so checks run here, never on the main thread.
+    @ObservationIgnored private let probeQueue = DispatchQueue(label: "com.amit.SoundDial.probe", qos: .utility)
+    @ObservationIgnored private var probing: Set<String> = []
+    /// Device object each availability result was measured on; a replugged device gets a new one.
+    @ObservationIgnored private var probedIDs: [String: AudioObjectID] = [:]
 
     private static let volumeAddress = AudioObjectPropertyAddress(
         kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyScopeOutput)
@@ -48,11 +57,16 @@ final class DeviceManager {
     init() {
         softGains = (UserDefaults.standard.dictionary(forKey: "softGains") as? [String: Float]) ?? [:]
         refresh()
+        reprobe()
         for selector in [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultInputDevice] {
             listeners.append(PropertyListener(CA.system, .init(selector)) { [weak self] in
                 self?.refresh()
+                self?.reprobe()
                 self?.onChange?()
             })
+        }
+        reprobeTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reprobe() }
         }
     }
 
@@ -94,10 +108,82 @@ final class DeviceManager {
     func input(uid: String?) -> AudioDevice? { uid.flatMap { u in inputs.first { $0.uid == u } } }
     var defaultOutput: AudioDevice? { output(uid: defaultOutputUID) }
 
-    /// The device an app with this preferred output actually plays on: its own device when connected,
-    /// otherwise the system default.
+    /// The device an app with this preferred output actually plays on: its own device when connected
+    /// and able to play, otherwise the system default.
     func effectiveOutput(preferredUID: String?) -> AudioDevice? {
-        output(uid: preferredUID) ?? defaultOutput
+        if let device = output(uid: preferredUID), !isUnavailable(device.uid) { return device }
+        return defaultOutput
+    }
+
+    // MARK: Availability
+
+    func isUnavailable(_ uid: String?) -> Bool {
+        uid.flatMap { availability[$0] } == false
+    }
+
+    /// True once the output has been checked and can play. Unchecked outputs get a check started.
+    func isReady(_ uid: String) -> Bool {
+        if availability[uid] == true { return true }
+        if availability[uid] == nil { probe(uid) }
+        return false
+    }
+
+    var unavailableUIDs: Set<String> {
+        Set(availability.filter { !$0.value }.keys)
+    }
+
+    /// Checks in the background whether macOS can start this output; calls `onChange` if the answer changed.
+    func probe(_ uid: String) {
+        guard let device = output(uid: uid), !probing.contains(uid) else { return }
+        probing.insert(uid)
+        let id = device.id
+        probeQueue.async { [weak self] in
+            let status = DeviceManager.startStatus(id)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.finishProbe(uid: uid, id: id, name: device.name, status: status) }
+            }
+        }
+    }
+
+    private func finishProbe(uid: String, id: AudioObjectID, name: String, status: OSStatus) {
+        probing.remove(uid)
+        guard output(uid: uid)?.id == id else { return } // unplugged or replugged meanwhile
+        let ok = status == noErr
+        let old = availability[uid]
+        probedIDs[uid] = id
+        guard old != ok else { return }
+        availability[uid] = ok
+        if !ok {
+            audioLog.error("\(name, privacy: .public) can't start audio: \(status) '\(fourCC(status), privacy: .public)'")
+        } else if old == false {
+            audioLog.info("\(name, privacy: .public) can play audio again")
+        }
+        onChange?()
+    }
+
+    /// Forgets results for unplugged or replugged devices, re-checks failed ones and the default output.
+    private func reprobe() {
+        for uid in availability.keys where output(uid: uid)?.id != probedIDs[uid] {
+            availability[uid] = nil
+            probedIDs[uid] = nil
+        }
+        for (uid, ok) in availability where !ok { probe(uid) }
+        if let uid = defaultOutputUID, availability[uid] == nil { probe(uid) }
+    }
+
+    /// Starts and stops a silent IO proc. Blocks for up to ~10 s on a broken device.
+    nonisolated private static func startStatus(_ id: AudioObjectID) -> OSStatus {
+        var procID: AudioDeviceIOProcID?
+        var status = AudioDeviceCreateIOProcIDWithBlock(&procID, id, nil) { _, _, _, output, _ in
+            for buffer in UnsafeMutableAudioBufferListPointer(output) {
+                if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+            }
+        }
+        guard status == noErr, let procID else { return status }
+        status = AudioDeviceStart(id, procID)
+        AudioDeviceStop(id, procID)
+        AudioDeviceDestroyIOProcID(id, procID)
+        return status
     }
 
     // MARK: Defaults
@@ -108,6 +194,7 @@ final class DeviceManager {
             do { try CA.set(CA.system, .init(selector), device.id) } catch { audioLog.error("\(error.localizedDescription)") }
         }
         refresh()
+        if availability[uid] != true { probe(uid) }
     }
 
     func setDefaultInput(_ uid: String) {

@@ -27,6 +27,9 @@ private struct RulesTab: View {
             Text("Choose where each app plays and how loud. Mic rules switch the system input while that app is recording.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            ForEach(model.devices.outputs.filter { model.devices.isUnavailable($0.uid) }) { device in
+                WarningText("\(device.name) can't play audio right now. Apps sent there play on the default output until it works again.")
+            }
 
             Table(model.routingBundleIDs.map(Row.init)) {
                 TableColumn("App") { row in AppCell(bundleID: row.id) }
@@ -101,17 +104,24 @@ private struct OutputCell: View {
 
     var body: some View {
         let uid = model.outputUID(bundleID)
-        Picker("", selection: Binding<String?>(get: { uid }, set: { model.setOutput(bundleID, $0) })) {
-            Text("System default").tag(String?.none)
-            Divider()
-            ForEach(model.devices.outputs) { device in
-                Label(device.name, systemImage: device.symbol).tag(Optional(device.uid))
+        HStack(spacing: 4) {
+            Picker("", selection: Binding<String?>(get: { uid }, set: { model.setOutput(bundleID, $0) })) {
+                Text("System default").tag(String?.none)
+                Divider()
+                ForEach(model.devices.outputs) { device in
+                    DeviceLabel(device: device, unavailable: model.devices.isUnavailable(device.uid)).tag(Optional(device.uid))
+                }
+                if let uid, model.devices.output(uid: uid) == nil {
+                    Text("Disconnected device").tag(Optional(uid))
+                }
             }
-            if let uid, model.devices.output(uid: uid) == nil {
-                Text("Disconnected device").tag(Optional(uid))
+            .labelsHidden()
+            if let note = model.fallbackNote(bundleID) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help(note)
             }
         }
-        .labelsHidden()
     }
 }
 
@@ -146,7 +156,7 @@ private struct HotkeysTab: View {
                     Picker("Slot \(i + 1)  (⌃⌥\(i + 1) / ⌃⌥⇧\(i + 1))", selection: $rules.slots[i]) {
                         Text("None").tag(String?.none)
                         ForEach(model.devices.outputs) { device in
-                            Label(device.name, systemImage: device.symbol).tag(Optional(device.uid))
+                            DeviceLabel(device: device, unavailable: model.devices.isUnavailable(device.uid)).tag(Optional(device.uid))
                         }
                         if let uid = rules.slots[i], model.devices.output(uid: uid) == nil {
                             Text("Disconnected device").tag(Optional(uid))

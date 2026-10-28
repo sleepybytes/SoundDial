@@ -47,6 +47,8 @@ final class AppModel {
         }
 
         Hotkeys.register(model: self)
+        // Check outputs that rules send apps to, so a dead one is flagged before those apps play.
+        for uid in Set(rules.rules.values.compactMap(\.outputUID)) { devices.probe(uid) }
         if permission == .undetermined { requestPermission() }
         reconcile()
     }
@@ -102,7 +104,15 @@ final class AppModel {
 
     func setOutput(_ bundleID: String, _ uid: String?) {
         rules.update(bundleID, name: name(bundleID)) { $0.outputUID = uid }
+        if let uid { devices.probe(uid) }
         reconcile()
+    }
+
+    /// Why an app isn't playing where it was sent, if it isn't.
+    func fallbackNote(_ bundleID: String) -> String? {
+        guard let uid = outputUID(bundleID), let wanted = devices.output(uid: uid), devices.isUnavailable(uid) else { return nil }
+        let actual = devices.defaultOutput?.name ?? "the default output"
+        return "\(wanted.name) can't play audio right now — using \(actual)"
     }
 
     func setInput(_ bundleID: String, _ uid: String?) {
@@ -180,7 +190,8 @@ final class AppModel {
     func switchDefaultOutput(slot: Int) {
         guard rules.slots.indices.contains(slot), let uid = rules.slots[slot], let device = devices.output(uid: uid) else { return }
         devices.setDefaultOutput(uid)
-        HUD.shared.show(icon: nil, symbol: device.symbol, title: device.name, subtitle: "Default output",
+        HUD.shared.show(icon: nil, symbol: device.symbol, title: device.name,
+                        subtitle: devices.isUnavailable(uid) ? "⚠︎ Can't play audio right now" : "Default output",
                         level: devices.volume(uid), muted: false)
     }
 
@@ -196,7 +207,7 @@ final class AppModel {
     private func showAppHUD(_ bundleID: String) {
         let device = effectiveOutput(bundleID)
         HUD.shared.show(icon: AppIcons.icon(bundleID), symbol: nil, title: name(bundleID),
-                        subtitle: device.map { "→ \($0.name)" } ?? "",
+                        subtitle: fallbackNote(bundleID).map { "⚠︎ \($0)" } ?? device.map { "→ \($0.name)" } ?? "",
                         level: volume(bundleID), muted: isMuted(bundleID))
     }
 

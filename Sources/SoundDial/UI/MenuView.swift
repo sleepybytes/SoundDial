@@ -11,8 +11,12 @@ struct MenuView: View {
             }
 
             section("Output") {
-                DevicePicker(devices: model.devices.outputs, selection: model.devices.defaultOutputUID) {
+                DevicePicker(devices: model.devices.outputs, selection: model.devices.defaultOutputUID,
+                             unavailable: model.devices.unavailableUIDs) {
                     model.devices.setDefaultOutput($0)
+                }
+                if let device = model.devices.defaultOutput, model.devices.isUnavailable(device.uid) {
+                    WarningText("\(device.name) can't play audio right now. Check its speakers or cable, or pick another output.")
                 }
                 if let uid = model.devices.defaultOutputUID {
                     VolumeSlider(value: model.devices.volume(uid), muted: false, symbol: "speaker.wave.2") {
@@ -82,6 +86,9 @@ private struct AppRow: View {
                          onMute: { model.setMuted(id, !model.isMuted(id)) }) {
                 model.setVolume(id, $0)
             }
+            if let note = model.fallbackNote(id) {
+                WarningText(note)
+            }
         }
         .padding(6)
         .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
@@ -98,6 +105,7 @@ struct OutputMenu: View {
     var body: some View {
         let current = model.outputUID(bundleID)
         let effective = model.effectiveOutput(bundleID)
+        let note = model.fallbackNote(bundleID)
         Menu {
             Button {
                 model.setOutput(bundleID, nil)
@@ -109,31 +117,58 @@ struct OutputMenu: View {
                 Button {
                     model.setOutput(bundleID, device.uid)
                 } label: {
-                    Label(device.name, systemImage: current == device.uid ? "checkmark" : device.symbol)
+                    Label(model.devices.isUnavailable(device.uid) ? "\(device.name) (can't play)" : device.name,
+                          systemImage: current == device.uid ? "checkmark" : device.symbol)
                 }
             }
         } label: {
-            Label(effective?.name ?? "—", systemImage: effective?.symbol ?? "speaker.slash")
+            Label(effective?.name ?? "—", systemImage: note != nil ? "exclamationmark.triangle.fill" : effective?.symbol ?? "speaker.slash")
                 .font(.caption)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help(current == nil ? "Following the system default output" : "Routed to \(effective?.name ?? "a disconnected device")")
+        .help(note ?? (current == nil ? "Following the system default output" : "Routed to \(effective?.name ?? "a disconnected device")"))
     }
 }
 
 struct DevicePicker: View {
     let devices: [AudioDevice]
     let selection: String?
+    var unavailable: Set<String> = []
     let onSelect: (String) -> Void
 
     var body: some View {
         Picker("", selection: Binding(get: { selection ?? "" }, set: { onSelect($0) })) {
             ForEach(devices) { device in
-                Label(device.name, systemImage: device.symbol).tag(device.uid)
+                DeviceLabel(device: device, unavailable: unavailable.contains(device.uid)).tag(device.uid)
             }
         }
         .labelsHidden()
+    }
+}
+
+struct DeviceLabel: View {
+    let device: AudioDevice
+    let unavailable: Bool
+
+    var body: some View {
+        if unavailable {
+            Label("\(device.name) (can't play)", systemImage: "exclamationmark.triangle")
+        } else {
+            Label(device.name, systemImage: device.symbol)
+        }
+    }
+}
+
+struct WarningText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
