@@ -38,6 +38,16 @@ audio until you allow it. You can grant it later in System Settings › Privacy 
 Slots are set under Configure › Hotkeys. By default they are built-in speakers, then USB or Bluetooth
 headphones, then a DisplayPort or HDMI monitor.
 
+### Volume keys on monitors
+
+Some outputs, such as many monitors over DisplayPort, give macOS no volume control, so the keyboard's volume
+keys stop working on them. When one of those is the default output, SoundDial handles 🔉 🔊 🔇 itself and
+changes the volume of the apps playing there. ⇧⌥ + volume key changes it in quarter steps. On outputs with their
+own volume control, the keys work as normal.
+
+This needs **Accessibility** access, which SoundDial asks for the first time it's needed. It also needs System Audio
+Recording. You can turn it off under Configure › Hotkeys.
+
 ## How it works
 
 Each app that needs a change gets a process tap, which mutes the original audio. The tap feeds a private

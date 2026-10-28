@@ -19,9 +19,13 @@ struct MenuView: View {
                     WarningText("\(device.name) can't play audio right now. Check its speakers or cable, or pick another output.")
                 }
                 if let uid = model.devices.defaultOutputUID {
-                    VolumeSlider(value: model.devices.volume(uid), muted: false, symbol: "speaker.wave.2") {
+                    VolumeSlider(value: model.devices.volume(uid), muted: model.devices.isSoftMuted(uid), symbol: "speaker.wave.2",
+                                 onMute: model.defaultOutputLacksVolume ? { model.devices.toggleSoftMute(uid) } : nil) {
                         model.devices.setVolume(uid, $0)
                     }
+                }
+                if model.needsAccessibilityForVolumeKeys {
+                    AccessibilityBanner()
                 }
             }
 
@@ -197,6 +201,23 @@ struct VolumeSlider: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 36, alignment: .trailing)
         }
+    }
+}
+
+struct AccessibilityBanner: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("\(model.devices.defaultOutput?.name ?? "This output") has no volume control of its own. Allow Accessibility so your keyboard's volume keys work on it.",
+                  systemImage: "keyboard")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Allow Accessibility…") { model.requestAccessibility() }
+                .controlSize(.small)
+        }
+        .padding(8)
+        .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

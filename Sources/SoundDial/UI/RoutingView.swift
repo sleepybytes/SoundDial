@@ -174,6 +174,22 @@ private struct HotkeysTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Keyboard volume keys") {
+                Toggle("Use the volume keys on outputs without their own volume control",
+                       isOn: Binding(get: { model.useVolumeKeys }, set: { model.useVolumeKeys = $0 }))
+                Text("macOS can't change the volume of some outputs, such as monitors over DisplayPort. When one of them is the default output, SoundDial handles 🔉 🔊 🔇 itself. Other outputs keep the normal macOS behaviour.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if model.useVolumeKeys {
+                    LabeledContent("Accessibility") {
+                        if model.volumeKeysInstalled {
+                            Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        } else {
+                            Button("Allow…") { model.requestAccessibility() }
+                        }
+                    }
+                }
+            }
             Section {
                 Toggle("Launch SoundDial at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.launchAtLogin = $0 }))
             }

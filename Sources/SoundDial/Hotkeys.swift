@@ -19,6 +19,7 @@ enum Hotkeys {
         .init(keys: "⌃⌥ 0", action: "Send selected app back to the default output"),
         .init(keys: "⌃⌥⇧ 1 / 2 / 3", action: "Make slot 1 / 2 / 3 the default output"),
         .init(keys: "⌃⌥⇧ ↑ / ↓", action: "Volume of the selected app's output device ±5%"),
+        .init(keys: "🔉 / 🔊 / 🔇", action: "Default output volume / mute, on outputs without their own volume"),
     ]
 
     private struct Entry {

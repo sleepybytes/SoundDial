@@ -15,8 +15,19 @@ final class AppModel {
     var selectedBundleID: String?
     private(set) var tappedBundleIDs: Set<String> = []
 
+    /// Keyboard volume keys drive SoundDial's volume on outputs that have no volume control of their own.
+    var useVolumeKeys = UserDefaults.standard.object(forKey: "useVolumeKeys") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(useVolumeKeys, forKey: "useVolumeKeys")
+            if useVolumeKeys { mediaKeys?.start() }
+        }
+    }
+    /// True once the volume-key event tap is running (Accessibility has been granted).
+    private(set) var volumeKeysInstalled = false
+
     @ObservationIgnored private let engine = RoutingEngine()
     @ObservationIgnored private let inputSwitcher = InputSwitcher()
+    @ObservationIgnored private var mediaKeys: MediaKeys?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -47,6 +58,18 @@ final class AppModel {
         }
 
         Hotkeys.register(model: self)
+        mediaKeys = MediaKeys(
+            shouldHandle: { [weak self] in self?.volumeKeysActive ?? false },
+            onKey: { [weak self] key, fine in self?.handleVolumeKey(key, fine: fine) },
+            onInstall: { [weak self] in self?.volumeKeysInstalled = true })
+        if useVolumeKeys {
+            mediaKeys?.start()
+            // Ask for Accessibility once, the first time the default output can't do volume itself.
+            if needsAccessibilityForVolumeKeys && !UserDefaults.standard.bool(forKey: "askedAccessibility") {
+                UserDefaults.standard.set(true, forKey: "askedAccessibility")
+                mediaKeys?.requestAccess()
+            }
+        }
         // Check outputs that rules send apps to, so a dead one is flagged before those apps play.
         for uid in Set(rules.rules.values.compactMap(\.outputUID)) { devices.probe(uid) }
         if permission == .undetermined { requestPermission() }
@@ -202,6 +225,42 @@ final class AppModel {
         HUD.shared.show(icon: nil, symbol: device.symbol, title: device.name,
                         subtitle: devices.hasHardwareVolume(device.uid) ? "Device volume" : "Device volume (software)",
                         level: devices.volume(device.uid), muted: false)
+    }
+
+    // MARK: Keyboard volume keys
+
+    /// The default output has no volume control of its own, so macOS can't use the volume keys on it.
+    var defaultOutputLacksVolume: Bool {
+        guard let uid = devices.defaultOutputUID else { return false }
+        return !devices.hasHardwareVolume(uid)
+    }
+
+    /// Software volume needs the audio permission; without it, leave the keys to macOS.
+    var volumeKeysActive: Bool { useVolumeKeys && defaultOutputLacksVolume && permission == .authorized }
+
+    var needsAccessibilityForVolumeKeys: Bool {
+        useVolumeKeys && defaultOutputLacksVolume && !volumeKeysInstalled
+    }
+
+    func requestAccessibility() {
+        mediaKeys?.requestAccess()
+        NSWorkspace.shared.open(MediaKeys.settingsURL)
+    }
+
+    func handleVolumeKey(_ key: MediaKeys.Key, fine: Bool) {
+        guard let device = devices.defaultOutput else { return }
+        let uid = device.uid
+        let step: Float = fine ? 1 / 64 : 1 / 16
+        switch key {
+        case .mute:
+            devices.toggleSoftMute(uid)
+        case .up, .down:
+            let base = devices.levelBeforeMute(uid) ?? devices.volume(uid)
+            let target = base + (key == .up ? step : -step)
+            devices.setVolume(uid, min(max((target / step).rounded() * step, 0), 1))
+        }
+        HUD.shared.show(icon: nil, symbol: device.symbol, title: device.name, subtitle: "Volume (SoundDial)",
+                        level: devices.volume(uid), muted: devices.isSoftMuted(uid))
     }
 
     private func showAppHUD(_ bundleID: String) {

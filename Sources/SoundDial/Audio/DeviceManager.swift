@@ -50,6 +50,7 @@ final class DeviceManager {
     @ObservationIgnored private var probing: Set<String> = []
     /// Device object each availability result was measured on; a replugged device gets a new one.
     @ObservationIgnored private var probedIDs: [String: AudioObjectID] = [:]
+    private var levelsBeforeMute: [String: Float] = [:]
 
     private static let volumeAddress = AudioObjectPropertyAddress(
         kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyScopeOutput)
@@ -219,7 +220,7 @@ final class DeviceManager {
         hasHardwareVolume(uid) ? 1 : softGains[uid] ?? 1
     }
 
-    func setVolume(_ uid: String, _ value: Float) {
+    func setVolume(_ uid: String, _ value: Float, keepMute: Bool = false) {
         let v = min(max(value, 0), 1)
         if hasHardwareVolume(uid), let device = output(uid: uid) {
             try? CA.set(device.id, Self.volumeAddress, Float32(v))
@@ -227,8 +228,25 @@ final class DeviceManager {
             softGains[uid] = v
             onChange?()
         }
+        if !keepMute { levelsBeforeMute[uid] = nil }
         refreshVolumes()
     }
+
+    /// Software mute for outputs without a mute control: drops the volume to 0 and remembers the level.
+    func isSoftMuted(_ uid: String) -> Bool { levelsBeforeMute[uid] != nil }
+
+    func toggleSoftMute(_ uid: String) {
+        if let level = levelsBeforeMute[uid] {
+            setVolume(uid, level)
+        } else {
+            let level = volume(uid)
+            setVolume(uid, 0, keepMute: true)
+            levelsBeforeMute[uid] = level
+        }
+    }
+
+    /// The level to resume from when a volume key is pressed while muted.
+    func levelBeforeMute(_ uid: String) -> Float? { levelsBeforeMute[uid] }
 
     // MARK: Helpers
 
